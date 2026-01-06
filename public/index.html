@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Приватный звонок</title>
+<style>
+body {
+  background:#111;
+  color:#fff;
+  font-family:sans-serif;
+  text-align:center;
+  padding-top:40px;
+}
+button {
+  padding:12px 20px;
+  margin:10px;
+  font-size:16px;
+  cursor:pointer;
+}
+</style>
+</head>
+<body>
+
+<h2>Звонок</h2>
+
+<button onclick="startCall()">Начать звонок</button>
+<button onclick="endCall()">Завершить</button>
+<br>
+<button id="micBtn" onclick="toggleMic()" disabled>Выключить микрофон</button>
+<button id="spkBtn" onclick="toggleSpeaker()" disabled>Выключить динамик</button>
+
+<script>
+// Токен будет автоматически подставлен из URL
+function getTokenFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('token') || "QazWsxEdc!!1";
+}
+
+const TOKEN = getTokenFromUrl();
+// URL WebSocket будет автоматически определён
+const WS_URL = window.location.origin.replace(/^http/, 'ws');
+
+let ws;
+let pc;
+let stream;
+let remoteAudio;
+let micEnabled = true;
+let spkEnabled = true;
+
+async function startCall() {
+  ws = new WebSocket(WS_URL);
+
+  pc = new RTCPeerConnection({
+    iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+  });
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+  } catch (err) {
+    alert("Ошибка доступа к микрофону: " + err.message);
+    return;
+  }
+
+  pc.onicecandidate = e => {
+    if (e.candidate) {
+      ws.send(JSON.stringify({ token: TOKEN, ice: e.candidate }));
+    }
+  };
+
+  pc.ontrack = e => {
+    if (!remoteAudio) {
+      remoteAudio = document.createElement("audio");
+      remoteAudio.srcObject = e.streams[0];
+      remoteAudio.autoplay = true;
+      document.body.appendChild(remoteAudio);
+    }
+  };
+
+  ws.onmessage = async (msg) => {
+    const data = JSON.parse(msg.data);
+    if (data.token !== TOKEN) return;
+
+    if (data.offer) {
+      await pc.setRemoteDescription(data.offer);
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      ws.send(JSON.stringify({ token: TOKEN, answer }));
+    }
+
+    if (data.answer) {
+      await pc.setRemoteDescription(data.answer);
+    }
+
+    if (data.ice) {
+      await pc.addIceCandidate(data.ice);
+    }
+  };
+
+  ws.onopen = async () => {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    ws.send(JSON.stringify({ token: TOKEN, offer }));
+  };
+
+  ws.onerror = (err) => {
+    console.error("WebSocket error:", err);
+  };
+
+  ws.onclose = () => {
+    console.log("WebSocket closed");
+  };
+
+  // Включаем кнопки управления
+  document.getElementById("micBtn").disabled = false;
+  document.getElementById("spkBtn").disabled = false;
+}
+
+function endCall() {
+  if (pc) pc.close();
+  if (ws) ws.close();
+  if (remoteAudio) remoteAudio.remove();
+
+  document.getElementById("micBtn").disabled = true;
+  document.getElementById("spkBtn").disabled = true;
+}
+
+function toggleMic() {
+  if (!stream) return;
+  micEnabled = !micEnabled;
+  stream.getAudioTracks()[0].enabled = micEnabled;
+  document.getElementById("micBtn").textContent = micEnabled ? "Выключить микрофон" : "Включить микрофон";
+}
+
+function toggleSpeaker() {
+  if (!remoteAudio) return;
+  spkEnabled = !spkEnabled;
+  remoteAudio.muted = !spkEnabled;
+  document.getElementById("spkBtn").textContent = spkEnabled ? "Выключить динамик" : "Включить динамик";
+}
+</script>
+
+</body>
+</html>
